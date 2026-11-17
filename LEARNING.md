@@ -10,6 +10,7 @@ built, why it was built that way, and the ideas you need to build it yourself.
 3. [Step 3: Prometheus, Tempo, Loki and Grafana](#step-3-prometheus-tempo-loki-and-grafana)
 4. [Step 4: SLOs, alerts and chaos scenarios](#step-4-slos-alerts-and-chaos-scenarios)
 5. [Step 5: Professional code quality and CI](#step-5-professional-code-quality-and-ci)
+6. [Step 6: What a professional repository needs](#step-6-what-a-professional-repository-needs)
 
 ---
 
@@ -648,3 +649,79 @@ docker compose up -d --build && ./scripts/smoke_test.sh
 - Change `BoundedStore.put` so it forgets to evict. Which test fails?
 - Delete the `try/except` in `gateway.checkout` and run the tests. Which
   rule from the table did you break?
+
+---
+
+## Step 6: What a professional repository needs
+
+### What we built
+
+| File | Why it exists |
+|---|---|
+| `README.md` badges + diagram | The first 10 seconds a visitor (or recruiter) spends. Badges prove CI is green; the Mermaid diagram renders on GitHub without an image. |
+| `CONTRIBUTING.md` | How to set up, the branch and commit conventions, the checks to run. Lowers the cost for anyone to help. |
+| `SECURITY.md` | Where to report vulnerabilities privately, and which demo settings are unsafe on purpose. |
+| `CHANGELOG.md` | Human-readable history per version ([Keep a Changelog](https://keepachangelog.com/)). Release notes are generated from it. |
+| `.github/PULL_REQUEST_TEMPLATE.md` | Every PR answers "what" and "how tested", with a checklist. |
+| `.github/ISSUE_TEMPLATE/*.yml` | Forms that ask for the details a bug report needs (steps, logs, version). |
+| `.github/CODEOWNERS` | Who must review changes. |
+| `.github/dependabot.yml` | Weekly PRs for new versions of Python packages, base images, compose images and GitHub Actions. |
+| `.pre-commit-config.yaml` | Runs ruff, mypy and the Power of Ten checker before each commit. |
+| `.editorconfig` | Same indentation and line endings in every editor. |
+| `.github/workflows/release.yml` | Continuous **Delivery**: a version tag builds and publishes the images and the GitHub release. |
+
+### Key concepts
+
+1. **CI vs CD.** *Continuous Integration* checks every change (step 5).
+   *Continuous Delivery* turns a checked change into something you can
+   deploy: here, versioned container images on GitHub Container Registry
+   (`ghcr.io/mitraker/observability-platform-gateway:v0.6.0`). *Continuous
+   Deployment* would go one step further and roll them out automatically.
+
+2. **Semantic Versioning.** `MAJOR.MINOR.PATCH`. Bump PATCH for fixes, MINOR
+   for new features that break nothing, MAJOR for breaking changes. While
+   the major version is 0 (like here), anything may still change.
+
+3. **Release from a tag.** `git tag -a v0.6.0 -m v0.6.0 && git push origin
+   v0.6.0`. The workflow runs the tests again, builds five images in parallel
+   (a *matrix* job), pushes them with a version tag and `latest`, attaches an
+   SBOM (software bill of materials: the list of everything inside the image)
+   and build provenance, then creates the GitHub release from the matching
+   `CHANGELOG.md` section. If there is no changelog entry, the release fails:
+   no undocumented releases.
+
+4. **Conventional Commits.** `feat: ...`, `fix: ...`, `docs: ...`. A
+   consistent history is easy to scan and can generate changelogs.
+
+5. **Dependabot + CI = safe upgrades.** Pinned versions make builds
+   reproducible, but pins go stale and collect vulnerabilities. Dependabot
+   proposes each upgrade as a PR, and CI (including the e2e test) decides if
+   it is safe. Related packages are grouped (all `opentelemetry-*` together)
+   because they must move in lockstep.
+
+6. **Shift left.** The earlier a problem is found, the cheaper it is:
+   editor (`.editorconfig`, ruff in the IDE) → pre-commit (seconds) → CI
+   (minutes) → review (hours) → production (expensive). Each layer catches
+   what the previous one missed.
+
+7. **Branch protection (set up on GitHub, not in a file).** In the repo's
+   Settings > Branches, protect `main`: require a PR, require the CI checks
+   to pass, require a review from code owners, and block force pushes. That
+   is what makes all the automation above *mandatory* rather than optional.
+
+### Try it yourself
+
+```bash
+pip install pre-commit && pre-commit install
+pre-commit run --all-files        # what will run on every commit
+```
+
+After the PRs are merged, make your first release:
+
+```bash
+git checkout main && git pull
+git tag -a v0.6.0 -m "v0.6.0" && git push origin v0.6.0
+```
+
+Then watch the **Actions** tab, and find the images under **Packages** on
+your GitHub profile.
