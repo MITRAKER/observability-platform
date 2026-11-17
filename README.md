@@ -15,11 +15,12 @@ docker compose up --build
 
 - Shop gateway: http://localhost:8080 (API docs at http://localhost:8080/docs)
 - Payments (for the chaos switch): http://localhost:8082/docs
+- Collector output: `docker compose logs -f otel-collector`
 
 ## Roadmap
 
 - [x] Step 1: Three services, load generator, Docker Compose
-- [ ] Step 2: OpenTelemetry instrumentation and Collector
+- [x] Step 2: OpenTelemetry instrumentation and Collector
 - [ ] Step 3: Prometheus, Tempo, Loki and Grafana dashboards
 - [ ] Step 4: SLOs, alert rules, chaos scenarios
 - [ ] Step 5: Architecture diagram, screenshots, CI

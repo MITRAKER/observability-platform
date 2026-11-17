@@ -1,33 +1,63 @@
 # Run everything with:  docker compose up --build
 # The shop is then at http://localhost:8080
+
+# Settings shared by all three services (a YAML "anchor", reused below with <<).
+# These OTEL_* variables are read by `opentelemetry-instrument`.
+x-otel-env: &otel-env
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+  OTEL_TRACES_EXPORTER: otlp
+  OTEL_METRICS_EXPORTER: otlp
+  OTEL_LOGS_EXPORTER: otlp
+  OTEL_METRIC_EXPORT_INTERVAL: "5000"            # send metrics every 5 s
+  OTEL_PYTHON_LOG_CORRELATION: "true"            # put trace_id in log records
+  OTEL_PYTHON_LOG_LEVEL: info
+  OTEL_RESOURCE_ATTRIBUTES: service.namespace=shop,service.version=0.2.0
+
 services:
   gateway:
     build:
       context: ./services
       args: { SERVICE: gateway }
     environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: gateway
       ORDERS_URL: http://orders:8000
     ports:
       - "8080:8000"   # only the gateway is reachable from your machine
-    depends_on: [orders]
+    depends_on: [orders, otel-collector]
 
   orders:
     build:
       context: ./services
       args: { SERVICE: orders }
     environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: orders
       PAYMENTS_URL: http://payments:8000
-    depends_on: [payments]
+    depends_on: [payments, otel-collector]
 
   payments:
     build:
       context: ./services
       args: { SERVICE: payments }
     environment:
+      <<: *otel-env
+      OTEL_SERVICE_NAME: payments
       CHAOS_ERROR_RATE: "0.02"
       CHAOS_EXTRA_LATENCY_MS: "0"
     ports:
       - "8082:8000"   # exposed so you can flip chaos on from your machine
+    depends_on: [otel-collector]
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.164.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
 
   loadgen:
     build: ./loadgen

@@ -3,6 +3,11 @@
 This file grows with each step of the project. Each section explains what was
 built, why it was built that way, and the ideas you need to build it yourself.
 
+## Contents
+
+1. [Step 1: Three services and Docker Compose](#step-1-three-services-and-docker-compose)
+2. [Step 2: OpenTelemetry and the Collector](#step-2-opentelemetry-and-the-collector)
+
 ---
 
 ## Step 1: Three services and Docker Compose
@@ -113,3 +118,145 @@ Right now, if checkout gets slow, all you can do is read logs from four
 containers and guess. There are no numbers over time (metrics), no way to
 follow one request across services (traces), and logs are not connected to
 anything. Step 2 adds OpenTelemetry to fix exactly that.
+
+---
+
+## Step 2: OpenTelemetry and the Collector
+
+### What we built
+
+Every service now produces the **three signals** of observability and sends
+them to an **OpenTelemetry Collector**:
+
+```
+ gateway ─┐
+ orders  ─┼── OTLP (traces + metrics + logs) ──>  otel-collector  ──> (step 3: Prometheus, Tempo, Loki)
+ payments ┘                                       today: prints to its own log
+```
+
+| File | Change |
+|---|---|
+| `services/requirements.txt` | Adds the OpenTelemetry SDK, OTLP exporter and auto-instrumentation packages. |
+| `services/Dockerfile` | Starts the app through `opentelemetry-instrument`. |
+| `services/*/main.py` | Adds span attributes, one manual span per service, two custom metrics, and log lines. |
+| `otel-collector/config.yaml` | The Collector pipeline: receive, process, export. |
+| `docker-compose.yml` | Adds the Collector and shared `OTEL_*` settings. |
+
+### The three signals
+
+| Signal | Question it answers | Example here |
+|---|---|---|
+| **Metrics** | "How much / how often / how fast, over time?" Cheap numbers, aggregated. | `shop.orders` counter split by `status`, request duration histograms. |
+| **Traces** | "What happened to *this one* request, step by step, across services?" | One checkout = one trace with spans in gateway, orders and payments. |
+| **Logs** | "What exactly did the code say at that moment?" | `payment failed for order=... amount=...` |
+
+The power comes from **connecting** them: a metric shows errors went up, you
+click into a trace of a failed request, and from the trace you jump to the
+exact log lines (they share the same `trace_id`).
+
+### Why it is designed this way
+
+**Why OpenTelemetry instead of a Prometheus client library?** OpenTelemetry
+(OTel) is the vendor-neutral standard. You instrument the code once, and the
+data can go to Prometheus, Grafana, Datadog, New Relic, Honeycomb, and so on,
+by changing Collector config, not code. That is why every job ad for
+observability mentions it.
+
+**Why auto-instrumentation?** `opentelemetry-instrument` patches FastAPI and
+httpx at startup. Without writing a line of tracing code we get a span for
+every incoming request, a span for every outgoing call, and standard HTTP
+metrics (`http.server.duration` etc.). We only add custom code where business
+meaning is needed (which user? how much money?).
+
+**Why a Collector in the middle, instead of apps sending straight to
+backends?**
+- Apps only know one address (`otel-collector:4318`). Swapping a backend
+  never touches app code.
+- Batching, retries and memory limits live in one place.
+- You can add, drop, rename or redact data centrally (for example, remove
+  credit-card numbers before they leave your network).
+
+**Why OTLP over HTTP (port 4318) and not gRPC (4317)?** Both work. The HTTP
+exporter has fewer dependencies (no `grpcio`, which is large to install), so
+images build faster. The Collector listens on both.
+
+### Key concepts
+
+1. **Trace, span, context propagation.** A *trace* is the whole journey of
+   one request. A *span* is one step in it, with a start time, a duration, a
+   name, attributes and a status. When gateway calls orders, the httpx
+   instrumentation adds a `traceparent` HTTP header holding the trace id.
+   Orders reads that header and creates its spans *inside the same trace*.
+   This is **context propagation** and it is the whole trick behind
+   distributed tracing. (The header format is the W3C Trace Context standard.)
+
+2. **Span attributes.** Key/value pairs on a span, like
+   `app.user_id=user-7`. In step 3 you will search Tempo for "all traces where
+   `app.user_id=user-7`".
+
+3. **Manual spans.** `with tracer.start_as_current_span("price_order"):`
+   creates a child span for a block of code you care about. In payments,
+   `card_processor.charge` is the span that grows when we turn on chaos
+   latency, which makes the slow part obvious in a trace.
+
+4. **Span status.** `span.set_status(Status(StatusCode.ERROR, ...))` marks a
+   span as failed so trace viewers show it in red.
+
+5. **Metric instruments.**
+   - *Counter*: only goes up (`shop.orders`). You later compute a *rate*
+     ("orders per second").
+   - *Histogram*: records a distribution (`shop.order.value`). You later ask
+     for averages or percentiles (p50, p95, p99).
+   - *Attributes* (labels) split one metric into series, like
+     `status=paid` vs `status=payment_failed`.
+   - **Cardinality warning:** never use unbounded values (user ids, order
+     ids) as metric attributes. Each unique value creates a new time series
+     and can blow up Prometheus. Put those on spans instead. That is why
+     `user_id` is a span attribute but `item` (4 possible values) is a metric
+     attribute.
+
+6. **Resource attributes.** Data describing *who* sent the telemetry:
+   `service.name`, `service.version`, `deployment.environment`. Set through
+   `OTEL_SERVICE_NAME` / `OTEL_RESOURCE_ATTRIBUTES`, and by the Collector's
+   `resource` processor.
+
+7. **Log correlation.** `OTEL_PYTHON_LOG_CORRELATION=true` stamps every log
+   record with the current `trace_id` and `span_id`. Run the services and you
+   will see lines like
+   `[trace_id=8190...518a span_id=2c85...3572 resource.service.name=orders] - order paid ...`
+
+8. **The Collector pipeline.** Receivers (`otlp`) -> processors
+   (`memory_limiter`, `resource`, `batch`) -> exporters (`debug` for now). One
+   pipeline per signal. Order matters: `memory_limiter` goes first so it can
+   refuse data before anything else spends memory on it.
+
+### Try it yourself
+
+```bash
+docker compose up --build
+docker compose logs -f otel-collector
+```
+
+You will see lines like `Traces {"resource spans": 3, "spans": 9}` every
+few seconds. To see full detail, change `verbosity: basic` to
+`verbosity: detailed` in `otel-collector/config.yaml` and restart the
+Collector. Then:
+
+```bash
+# Make payments slow and broken
+curl -X POST localhost:8082/chaos -H 'content-type: application/json' \
+     -d '{"error_rate":0.5,"extra_latency_ms":400}'
+```
+
+In the detailed output, look for spans named `card_processor.charge` with
+`Status code: Error`, and log records with `Body: card declined by processor`
+whose `Trace ID` matches.
+
+**Exercise:** add a manual span in the gateway around input validation, and a
+counter `shop.checkouts` with an attribute `result` (`ok` / `failed`).
+
+### What is missing (and why step 3 exists)
+
+Reading telemetry in a terminal log does not scale. Step 3 sends metrics to
+**Prometheus**, traces to **Tempo** and logs to **Loki**, and puts all three
+in **Grafana** dashboards where you can click from one signal to another.
