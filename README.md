@@ -18,21 +18,24 @@ docker compose up --build
 | What | Where |
 |---|---|
 | Grafana (dashboard: Shop > Shop overview) | http://localhost:3000 |
-| Prometheus | http://localhost:9090 |
+| Prometheus (alerts at /alerts) | http://localhost:9090 |
+| Alertmanager | http://localhost:9093 |
 | Shop gateway API | http://localhost:8080/docs |
 | Payments chaos switch | http://localhost:8082/docs |
 
-Cause an incident:
+Cause an incident and watch the SLO alerts fire:
 
 ```bash
-curl -X POST localhost:8082/chaos -H 'content-type: application/json' \
-     -d '{"error_rate":0.15,"extra_latency_ms":250}'
+./scripts/chaos.sh flaky          # or: slow, outage, healthy
+docker compose logs -f alert-sink # the "pager"
 ```
+
+![SLO dashboard during an incident](docs/slo-dashboard.png)
 
 ## Roadmap
 
 - [x] Step 1: Three services, load generator, Docker Compose
 - [x] Step 2: OpenTelemetry instrumentation and Collector
 - [x] Step 3: Prometheus, Tempo, Loki and Grafana dashboards
-- [ ] Step 4: SLOs, alert rules, chaos scenarios
+- [x] Step 4: SLOs, burn-rate alerts with unit tests, Alertmanager, chaos scenarios, runbooks
 - [ ] Step 5: Architecture diagram, CI

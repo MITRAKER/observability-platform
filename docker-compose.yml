@@ -12,7 +12,7 @@ x-otel-env: &otel-env
   OTEL_METRIC_EXPORT_INTERVAL: "5000"            # send metrics every 5 s
   OTEL_PYTHON_LOG_CORRELATION: "true"            # put trace_id in log records
   OTEL_PYTHON_LOG_LEVEL: info
-  OTEL_RESOURCE_ATTRIBUTES: service.namespace=shop,service.version=0.3.0
+  OTEL_RESOURCE_ATTRIBUTES: service.namespace=shop,service.version=0.4.0
 
 services:
   gateway:
@@ -68,12 +68,26 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --web.enable-remote-write-receiver   # lets Tempo push metrics in
       - --enable-feature=exemplar-storage    # keeps trace ids on samples
-      - --storage.tsdb.retention.time=2d
+      - --storage.tsdb.retention.time=31d    # SLOs are measured over 30 days
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
       - prometheus-data:/prometheus
     ports:
       - "9090:9090"
+
+  alertmanager:
+    image: prom/alertmanager:v0.29.0
+    command: ["--config.file=/etc/alertmanager/alertmanager.yml"]
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "9093:9093"
+    depends_on: [alert-sink]
+
+  # Stand-in for Slack/PagerDuty: prints notifications to its log.
+  alert-sink:
+    build: ./alert-sink
 
   tempo:
     image: grafana/tempo:2.10.4
@@ -106,7 +120,7 @@ services:
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
       - "3000:3000"
-    depends_on: [prometheus, tempo, loki]
+    depends_on: [prometheus, tempo, loki, alertmanager]
 
   loadgen:
     build: ./loadgen

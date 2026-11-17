@@ -8,6 +8,7 @@ built, why it was built that way, and the ideas you need to build it yourself.
 1. [Step 1: Three services and Docker Compose](#step-1-three-services-and-docker-compose)
 2. [Step 2: OpenTelemetry and the Collector](#step-2-opentelemetry-and-the-collector)
 3. [Step 3: Prometheus, Tempo, Loki and Grafana](#step-3-prometheus-tempo-loki-and-grafana)
+4. [Step 4: SLOs, alerts and chaos scenarios](#step-4-slos-alerts-and-chaos-scenarios)
 
 ---
 
@@ -417,3 +418,113 @@ Then practise the investigation flow you would use on call:
 Nobody stares at dashboards all day. Step 4 defines what "good enough" means
 (SLOs), and adds alerts that fire when the shop is burning through its error
 budget too fast, plus scripted chaos scenarios to test them.
+
+---
+
+## Step 4: SLOs, alerts and chaos scenarios
+
+### What we built
+
+| File | What it does |
+|---|---|
+| `prometheus/rules/slo-recording.yml` | Recording rules: checkout error ratio and slow ratio over 8 windows (5m to 30d), error budget left. |
+| `prometheus/rules/alerts.yml` | Multi-window, multi-burn-rate SLO alerts, plus "no traffic" and "pipeline down". |
+| `prometheus/tests/alerts_test.yml` | Unit tests for the alerts (`promtool test rules`). |
+| `alertmanager/alertmanager.yml` | Groups, throttles and routes alerts; one inhibit rule. |
+| `alert-sink/` | A 60-line webhook receiver standing in for Slack/PagerDuty. |
+| `grafana/dashboards/shop-slos.json` | SLIs, error budget gauges, burn-rate graphs, firing alerts. |
+| `scripts/chaos.sh` | `healthy`, `flaky`, `slow`, `outage` scenarios. |
+| `docs/runbooks.md` | What to do when each alert fires. |
+| `tools/gen_*_dashboard.py` | The Python that generates the dashboard JSON (easier to review than 600 lines of JSON). |
+
+### Key concepts
+
+1. **SLI, SLO, SLA.**
+   - **SLI** (indicator): a measurement, as a ratio of good events to all
+     events. "Share of checkouts that did not return 5xx."
+   - **SLO** (objective): the target for an SLI over a window. "99% over
+     30 days."
+   - **SLA** (agreement): a contract with customers, with money attached.
+     Always looser than the SLO, so you notice problems before you pay.
+
+2. **Error budget.** A 99% SLO means 1% of requests are *allowed* to fail.
+   That 1% is the budget. While budget is left, the team can ship fast and
+   take risks. When it runs out, reliability work comes first. It turns
+   "is the system reliable enough?" from an argument into a number.
+
+3. **Why not just alert on "error rate > 5%"?** A static threshold either
+   fires on every small blip (alert fatigue, people start ignoring pages) or
+   misses slow, steady problems. Alerting on *budget burn* asks the question
+   that actually matters: "at this rate, will we break our promise?"
+
+4. **Burn rate.** How fast you spend the budget compared to "exactly on
+   pace". Burn rate 1 spends the 30-day budget in 30 days. 14.4 spends 2% of
+   it in one hour, which is worth waking someone up for.
+
+5. **Multi-window.** Each alert requires a *long* window (1h) and a *short*
+   window (5m) to both be over the threshold. The long window proves the
+   problem is significant; the short one proves it is still happening, so
+   the alert stops quickly once you fix it.
+
+6. **Recording rules.** A 30-day `rate()` over raw data is expensive.
+   Recording rules compute it every 30 s and store the result as a new,
+   cheap series (`slo:checkout_errors:ratio_rate30d`). Naming convention:
+   `level:metric:operation`.
+
+7. **Testing alerts.** `promtool test rules` feeds synthetic series into the
+   rule engine and checks which alerts fire at what time. We test the happy
+   path (nothing fires at 0.5% errors) and each failure (20% errors, 40%
+   slow, a dead service, a dead Collector). An alert you never tested is an
+   alert you hope works.
+
+8. **Alertmanager.** Prometheus only decides *that* something is wrong.
+   Alertmanager handles the humans: **grouping** (one message for related
+   alerts), **throttling** (`repeat_interval`), **routing** (pages vs
+   tickets, which team), **silences** (planned maintenance) and
+   **inhibition** (if the telemetry pipeline is down, suppress the alerts
+   that depend on it).
+
+9. **Symptoms over causes.** Page on what users feel (checkouts failing or
+   slow), not on every internal cause (CPU at 80%). Causes go on dashboards;
+   symptoms go to pagers.
+
+10. **Runbooks.** Every alert has a `runbook` annotation linking to
+    `docs/runbooks.md`. At 3 am nobody should have to guess what an alert
+    means.
+
+![SLO dashboard during an incident](docs/slo-dashboard.png)
+
+The screenshot was taken during a real test run: `flaky` mode pushed the 5m
+burn rate to 20x, `CheckoutErrorBudgetSlowBurn` fired, and the alert-sink
+logged `[FIRING] CheckoutErrorBudgetSlowBurn (page)`. The "30d" numbers are
+low only because the demo had run for 30 minutes, mostly under chaos.
+
+### Try it yourself
+
+```bash
+docker compose up --build
+./scripts/chaos.sh flaky        # 20% of payments fail
+```
+
+Then watch, in order:
+1. Grafana > Shop > **Shop SLOs**: the 5m burn rate jumps over the 14.4x
+   line, then the 1h line follows. Error budget gauges start dropping.
+2. http://localhost:9090/alerts: `CheckoutErrorBudgetFastBurn` goes
+   *pending*, then *firing* after 2 minutes (`for: 2m`).
+3. http://localhost:9093: Alertmanager shows the grouped alert.
+4. `docker compose logs -f alert-sink`: the "page" arrives.
+5. `./scripts/chaos.sh healthy`: within a few minutes you get a
+   `[RESOLVED]` notification. That is the short window doing its job.
+
+Run the alert unit tests:
+
+```bash
+docker run --rm --entrypoint promtool -v $PWD/prometheus:/p \
+  prom/prometheus:v3.13.5 test rules /p/tests/alerts_test.yml
+```
+
+**Exercises:**
+- Add a 99.9% SLO instead of 99%. What does burn rate 14.4 mean now in
+  error percent? (Answer: 1.44%.) Update the test that expects 20% to fire.
+- Add a "ticket" severity alert (burn rate 1 over 3d and 6h) and route
+  `severity="ticket"` to a different receiver in Alertmanager.

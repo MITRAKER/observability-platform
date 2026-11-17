@@ -1,0 +1,107 @@
+# Unit tests for alert rules. Run with:
+#   docker run --rm --entrypoint promtool -v $PWD/prometheus:/p prom/prometheus:v3.13.5 test rules /p/tests/alerts_test.yml
+#
+# Each test feeds fake time series into Prometheus' rule engine and checks
+# which alerts are firing at a given time. Testing alerts means you find out
+# they are broken in CI, not during an incident.
+
+rule_files:
+  - ../rules/slo-recording.yml
+  - ../rules/alerts.yml
+
+evaluation_interval: 30s
+
+tests:
+  # 1. Healthy: 10 req/s, 0.5% errors, everything fast. No alert may fire.
+  - name: healthy traffic fires nothing
+    interval: 1m
+    input_series:
+      - series: 'http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout",http_status_code="200"}'
+        values: '0+597x90'
+      - series: 'http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout",http_status_code="502"}'
+        values: '0+3x90'
+      - series: 'http_server_duration_milliseconds_bucket{service_name="gateway",http_target="/checkout",http_status_code="200",le="250.0"}'
+        values: '0+597x90'
+      - series: 'http_server_duration_milliseconds_bucket{service_name="gateway",http_target="/checkout",http_status_code="502",le="250.0"}'
+        values: '0+3x90'
+      - series: 'up{job="otel-collector"}'
+        values: '1x90'
+    alert_rule_test:
+      - { eval_time: 60m, alertname: CheckoutErrorBudgetFastBurn, exp_alerts: [] }
+      - { eval_time: 60m, alertname: CheckoutErrorBudgetSlowBurn, exp_alerts: [] }
+      - { eval_time: 60m, alertname: CheckoutLatencyBudgetFastBurn, exp_alerts: [] }
+      - { eval_time: 60m, alertname: ServiceNoTraffic, exp_alerts: [] }
+      - { eval_time: 60m, alertname: TelemetryPipelineDown, exp_alerts: [] }
+
+  # 2. Outage: 20% of checkouts fail. Fast burn must page.
+  - name: 20 percent errors pages fast burn
+    interval: 1m
+    input_series:
+      - series: 'http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout",http_status_code="200"}'
+        values: '0+480x90'
+      - series: 'http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout",http_status_code="502"}'
+        values: '0+120x90'
+      - series: 'http_server_duration_milliseconds_bucket{service_name="gateway",http_target="/checkout",le="250.0"}'
+        values: '0+600x90'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: CheckoutErrorBudgetFastBurn
+        exp_alerts:
+          - exp_labels: { severity: page, slo: checkout-availability }
+            exp_annotations:
+              summary: "Checkout is burning its error budget 14x too fast"
+              description: "20% of checkouts are failing (5m window). At this rate the 30-day budget is gone in about 2 days."
+              runbook: "docs/runbooks.md#checkouterrorbudgetfastburn"
+
+  # 3. Slow: 40% of checkouts take longer than 250 ms. Latency alert pages.
+  - name: slow checkouts page latency alert
+    interval: 1m
+    input_series:
+      - series: 'http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout",http_status_code="200"}'
+        values: '0+600x90'
+      - series: 'http_server_duration_milliseconds_bucket{service_name="gateway",http_target="/checkout",http_status_code="200",le="250.0"}'
+        values: '0+360x90'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: CheckoutLatencyBudgetFastBurn
+        exp_alerts:
+          - exp_labels: { severity: page, slo: checkout-latency }
+            exp_annotations:
+              summary: "Too many slow checkouts (> 250 ms)"
+              description: "40% of checkouts are slower than 250 ms."
+              runbook: "docs/runbooks.md#checkoutlatencybudgetfastburn"
+
+  # 4. Payments stops receiving traffic after 70 minutes.
+  - name: dead service pages no traffic
+    interval: 1m
+    input_series:
+      - series: 'http_server_duration_milliseconds_count{service_name="payments",http_target="/payments",http_status_code="200"}'
+        values: '0+300x70 21000x30'
+    alert_rule_test:
+      - eval_time: 69m
+        alertname: ServiceNoTraffic
+        exp_alerts: []
+      - eval_time: 80m
+        alertname: ServiceNoTraffic
+        exp_alerts:
+          - exp_labels: { severity: page, service_name: payments }
+            exp_annotations:
+              summary: "payments receives no requests"
+              description: "payments has handled no requests for 5 minutes."
+              runbook: "docs/runbooks.md#servicenotraffic"
+
+  # 5. Collector unreachable.
+  - name: collector down pages
+    interval: 1m
+    input_series:
+      - series: 'up{job="otel-collector"}'
+        values: '1x5 0x10'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: TelemetryPipelineDown
+        exp_alerts:
+          - exp_labels: { severity: page, job: otel-collector }
+            exp_annotations:
+              summary: "Prometheus cannot scrape the OpenTelemetry Collector"
+              description: "No metrics are arriving. Dashboards and SLO alerts are blind."
+              runbook: "docs/runbooks.md#telemetrypipelinedown"
