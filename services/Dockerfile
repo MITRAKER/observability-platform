@@ -17,4 +17,8 @@ RUN useradd --create-home appuser
 USER appuser
 
 EXPOSE 8000
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# `opentelemetry-instrument` wraps the normal start command. Before the app
+# starts, it finds the installed instrumentation packages (FastAPI, httpx,
+# logging) and patches them, then reads OTEL_* environment variables to know
+# where to send data. The app code needs no tracing setup of its own.
+CMD ["opentelemetry-instrument", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

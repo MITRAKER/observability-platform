@@ -7,12 +7,17 @@ later have something to show:
 You can also change them while the service runs with POST /chaos.
 """
 import asyncio
+import logging
 import os
 import random
 
 from fastapi import FastAPI, HTTPException
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 from pydantic import BaseModel, Field
 
+log = logging.getLogger("payments")
+tracer = trace.get_tracer("payments")
 app = FastAPI(title="payments")
 
 chaos = {
@@ -39,13 +44,23 @@ async def health():
 
 @app.post("/payments")
 async def charge(req: PaymentRequest):
-    # Normal work takes 20-120 ms, plus whatever chaos adds.
-    delay_ms = random.uniform(20, 120) + chaos["extra_latency_ms"]
-    await asyncio.sleep(delay_ms / 1000)
+    # This span stands in for a call to a real card processor (Stripe etc.).
+    # When payments is slow, this is the bar that grows in the trace.
+    with tracer.start_as_current_span("card_processor.charge") as span:
+        span.set_attribute("app.order_id", req.order_id)
+        span.set_attribute("app.payment.amount", req.amount)
 
-    if random.random() < chaos["error_rate"]:
-        raise HTTPException(status_code=500, detail="card processor error")
+        # Normal work takes 20-120 ms, plus whatever chaos adds.
+        delay_ms = random.uniform(20, 120) + chaos["extra_latency_ms"]
+        await asyncio.sleep(delay_ms / 1000)
 
+        if random.random() < chaos["error_rate"]:
+            # Mark the span as failed so the trace shows it in red.
+            span.set_status(Status(StatusCode.ERROR, "card processor error"))
+            log.error("card declined by processor order=%s", req.order_id)
+            raise HTTPException(status_code=500, detail="card processor error")
+
+    log.info("payment approved order=%s amount=%s", req.order_id, req.amount)
     return {"order_id": req.order_id, "charged": req.amount, "status": "approved"}
 
 
@@ -57,4 +72,5 @@ async def get_chaos():
 @app.post("/chaos")
 async def set_chaos(settings: ChaosSettings):
     chaos.update(settings.model_dump())
+    log.warning("chaos settings changed: %s", chaos)
     return chaos

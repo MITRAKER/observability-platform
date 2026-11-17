@@ -1,0 +1,64 @@
+# OpenTelemetry Collector pipeline.
+#
+# Every service sends ALL its telemetry (traces, metrics, logs) to this one
+# place over OTLP. The Collector cleans it up and forwards it. Apps never need
+# to know which backend (Prometheus, Tempo, Loki, Datadog...) is behind it.
+#
+#   receivers  -> how data comes IN
+#   processors -> what happens to it on the way
+#   exporters  -> where it goes OUT
+#   service.pipelines -> wires them together, one pipeline per signal
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Protects the Collector from running out of memory under a traffic spike.
+  # Always put it first.
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+
+  # Groups data into batches before sending. Far fewer network calls.
+  batch:
+    send_batch_size: 1024
+    timeout: 5s
+
+  # Stamps every piece of data with the environment it came from.
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: demo
+        action: upsert
+
+exporters:
+  # For step 2 we only print to the Collector's own log so you can see the
+  # data arriving. Step 3 replaces this with Prometheus, Tempo and Loki.
+  debug:
+    verbosity: basic
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [debug]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [debug]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [debug]
