@@ -1,0 +1,45 @@
+# Loki stores logs. Unlike Elasticsearch it does NOT index the log text,
+# only a few labels (like service_name). That makes it cheap to run;
+# you filter the text at query time instead.
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # Lets Loki keep OTLP attributes such as trace_id as "structured metadata"
+  # next to each line, without turning them into (expensive) labels.
+  allow_structured_metadata: true
+  volume_enabled: true
+  retention_period: 24h
+
+pattern_ingester:
+  enabled: true
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem

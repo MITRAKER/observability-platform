@@ -1,5 +1,5 @@
 # Run everything with:  docker compose up --build
-# The shop is then at http://localhost:8080
+# The shop is then at http://localhost:8080 and Grafana at http://localhost:3000
 
 # Settings shared by all three services (a YAML "anchor", reused below with <<).
 # These OTEL_* variables are read by `opentelemetry-instrument`.
@@ -12,7 +12,7 @@ x-otel-env: &otel-env
   OTEL_METRIC_EXPORT_INTERVAL: "5000"            # send metrics every 5 s
   OTEL_PYTHON_LOG_CORRELATION: "true"            # put trace_id in log records
   OTEL_PYTHON_LOG_LEVEL: info
-  OTEL_RESOURCE_ATTRIBUTES: service.namespace=shop,service.version=0.2.0
+  OTEL_RESOURCE_ATTRIBUTES: service.namespace=shop,service.version=0.3.0
 
 services:
   gateway:
@@ -50,6 +50,8 @@ services:
       - "8082:8000"   # exposed so you can flip chaos on from your machine
     depends_on: [otel-collector]
 
+  # ---------------- Observability stack ----------------
+
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.164.0
     command: ["--config=/etc/otelcol/config.yaml"]
@@ -58,6 +60,53 @@ services:
     ports:
       - "4317:4317"   # OTLP gRPC
       - "4318:4318"   # OTLP HTTP
+    depends_on: [tempo, loki]
+
+  prometheus:
+    image: prom/prometheus:v3.13.5
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.enable-remote-write-receiver   # lets Tempo push metrics in
+      - --enable-feature=exemplar-storage    # keeps trace ids on samples
+      - --storage.tsdb.retention.time=2d
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+
+  tempo:
+    image: grafana/tempo:2.10.4
+    command: ["-config.file=/etc/tempo.yaml"]
+    user: root   # the local storage volume must be writable
+    volumes:
+      - ./tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200"
+
+  loki:
+    image: grafana/loki:3.6.21
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+
+  grafana:
+    image: grafana/grafana:12.4.15
+    environment:
+      # Demo only: log in automatically as admin. Never do this in production.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on: [prometheus, tempo, loki]
 
   loadgen:
     build: ./loadgen
@@ -65,3 +114,8 @@ services:
       GATEWAY_URL: http://gateway:8000
       RPS: "5"
     depends_on: [gateway]
+
+volumes:
+  prometheus-data:
+  tempo-data:
+  loki-data:

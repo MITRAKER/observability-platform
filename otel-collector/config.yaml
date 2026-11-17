@@ -38,8 +38,28 @@ processors:
         action: upsert
 
 exporters:
-  # For step 2 we only print to the Collector's own log so you can see the
-  # data arriving. Step 3 replaces this with Prometheus, Tempo and Loki.
+  # METRICS -> exposed on :8889 in Prometheus format; Prometheus scrapes it.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    # Copy resource attributes (service.name, deployment.environment...)
+    # onto every metric as labels, so we can filter by service in queries.
+    resource_to_telemetry_conversion:
+      enabled: true
+    # OpenMetrics format carries exemplars: a trace id attached to a metric
+    # sample, so Grafana can jump from a latency spike to an example trace.
+    enable_open_metrics: true
+
+  # TRACES -> pushed to Tempo over OTLP gRPC.
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+  # LOGS -> pushed to Loki's native OTLP endpoint.
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+
+  # Still handy for debugging: add it to a pipeline below to print data.
   debug:
     verbosity: basic
 
@@ -53,12 +73,12 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, resource, batch]
-      exporters: [debug]
+      exporters: [otlp/tempo]
     metrics:
       receivers: [otlp]
       processors: [memory_limiter, resource, batch]
-      exporters: [debug]
+      exporters: [prometheus]
     logs:
       receivers: [otlp]
       processors: [memory_limiter, resource, batch]
-      exporters: [debug]
+      exporters: [otlphttp/loki]

@@ -7,6 +7,7 @@ built, why it was built that way, and the ideas you need to build it yourself.
 
 1. [Step 1: Three services and Docker Compose](#step-1-three-services-and-docker-compose)
 2. [Step 2: OpenTelemetry and the Collector](#step-2-opentelemetry-and-the-collector)
+3. [Step 3: Prometheus, Tempo, Loki and Grafana](#step-3-prometheus-tempo-loki-and-grafana)
 
 ---
 
@@ -260,3 +261,159 @@ counter `shop.checkouts` with an attribute `result` (`ok` / `failed`).
 Reading telemetry in a terminal log does not scale. Step 3 sends metrics to
 **Prometheus**, traces to **Tempo** and logs to **Loki**, and puts all three
 in **Grafana** dashboards where you can click from one signal to another.
+
+---
+
+## Step 3: Prometheus, Tempo, Loki and Grafana
+
+### What we built
+
+Each signal now lands in a real backend, and Grafana shows all three in one
+dashboard where you can click from one to another.
+
+```
+                                ┌─ metrics ─> :8889 <── scraped by ── Prometheus ─┐
+ services ─ OTLP ─> Collector ──┼─ traces ──> Tempo ── service-graph metrics ──>  │
+                                └─ logs ────> Loki                                │
+                                                                                  v
+                                      Grafana  <── queries Prometheus, Tempo, Loki
+```
+
+![Shop overview dashboard](docs/dashboard.png)
+
+| File | What it does |
+|---|---|
+| `otel-collector/config.yaml` | Three exporters now: `prometheus`, `otlp/tempo`, `otlphttp/loki`. |
+| `prometheus/prometheus.yml` | Scrapes the Collector every 10 s. |
+| `tempo/tempo.yaml` | Stores traces and generates service-graph and span metrics. |
+| `loki/loki.yaml` | Stores logs, keeps `trace_id` as structured metadata. |
+| `grafana/provisioning/datasources/datasources.yaml` | The three data sources plus the links between them. |
+| `grafana/provisioning/dashboards/dashboards.yaml` | Tells Grafana to load dashboards from a folder. |
+| `grafana/dashboards/shop-overview.json` | The "Shop overview" dashboard. |
+
+Open http://localhost:3000 and go to Dashboards > Shop > Shop overview.
+
+### Why each tool
+
+**Prometheus (metrics).** The industry default for metrics. It stores numbers
+as *time series* (a metric name + labels -> a value every 10 s) and has a
+query language, PromQL. It **pulls**: every 10 s it calls an HTTP endpoint
+and reads the current values. The Collector's `prometheus` exporter provides
+that endpoint.
+
+**Tempo (traces).** Grafana's trace store. It only indexes the trace ID and a
+few fields, and keeps everything else in cheap object storage, so it can
+store 100% of traces instead of a sample. You search with **TraceQL**, e.g.
+`{ status = error || duration > 300ms }`.
+
+**Loki (logs).** "Prometheus, but for logs." It indexes only labels like
+`service_name`, not the full text, which makes it much cheaper than
+Elasticsearch. You query with **LogQL**: pick streams with labels, then
+filter: `{service_name="orders"} |= "payment failed"`.
+
+**Grafana (UI).** Talks to all three. The value is not just pretty graphs: it
+is **correlation**, jumping between signals with one click.
+
+### Key concepts
+
+1. **Push vs pull.** Services *push* OTLP to the Collector. Prometheus *pulls*
+   from the Collector. Tempo *pushes* its generated metrics into Prometheus
+   (remote write). Knowing which way data flows tells you where to look when
+   data is missing.
+
+2. **How OTel names become Prometheus names.** The exporter converts dots to
+   underscores and adds units and suffixes: `shop.orders` (a counter) becomes
+   `shop_orders_total`; `http.server.duration` in ms becomes
+   `http_server_duration_milliseconds_bucket/_sum/_count`. Resource
+   attributes become labels like `service_name`.
+
+3. **The RED method.** For every service that handles requests, watch:
+   **R**ate (requests/s), **E**rrors (% failing), **D**uration (latency
+   percentiles). The middle row of the dashboard is exactly that. (For
+   resources like CPU or disks, the matching method is USE: Utilization,
+   Saturation, Errors.)
+
+4. **PromQL in four patterns.** Every query in the dashboard is one of these:
+   ```promql
+   # rate: per-second increase of a counter over the last minute
+   sum by (service_name) (rate(http_server_duration_milliseconds_count[1m]))
+
+   # error ratio: failing rate divided by total rate
+   sum(rate(..._count{http_status_code=~"5.."}[1m])) / sum(rate(..._count[1m]))
+
+   # percentile from a histogram: always keep "le" in the "by" clause
+   histogram_quantile(0.95, sum by (le, service_name) (rate(..._bucket[1m])))
+
+   # per-minute value: rate is per second, so multiply by 60
+   sum(rate(shop_order_value_USD_sum[5m])) * 60
+   ```
+   Never graph a raw counter: it only goes up and resets when a service
+   restarts. `rate()` handles both.
+
+5. **Why percentiles, not averages.** If 99 requests take 50 ms and one takes
+   5 s, the average is 100 ms and looks fine, but 1 in 100 users waits 5 s.
+   p95/p99 show the experience of your unluckiest users. Note: percentiles
+   from histograms are *estimates* interpolated inside buckets, which is why
+   "Order value p95" can show $600 even though the largest order is $567.
+
+6. **Exemplars.** The dots on the latency graph. Each one is a real
+   measurement with the `trace_id` of the request it came from. Click one and
+   Grafana opens that trace. This is the fastest route from "latency is high"
+   to "here is a slow request".
+
+7. **Service graph from traces.** Tempo's metrics generator looks at
+   parent/child spans across services and produces
+   `traces_service_graph_request_total{client="orders",server="payments"}`.
+   Grafana draws the service map from those metrics. No one had to draw the
+   architecture by hand: it is discovered from real traffic.
+
+8. **Correlation links (configured in `datasources.yaml`).**
+   - Metric -> trace: `exemplarTraceIdDestinations`
+   - Trace -> logs: `tracesToLogsV2` (a "Logs for this span" button)
+   - Log -> trace: `derivedFields` on Loki (a "View trace" button using the
+     `trace_id` stored with each log line)
+
+9. **Labels vs structured metadata in Loki.** Labels define *streams* and are
+   indexed, so they must be low-cardinality (`service_name`, maybe `level`).
+   High-cardinality values like `trace_id` are stored as *structured metadata*:
+   searchable, but not indexed. Same cardinality rule as Prometheus.
+
+10. **Provisioning (config as code).** Data sources and dashboards live in
+    files in Git. Delete every container, run `docker compose up` again, and
+    Grafana comes back exactly the same. No clicking, nothing lost, and changes
+    go through code review.
+
+### Try it yourself
+
+```bash
+docker compose up --build
+# Grafana:    http://localhost:3000   (Dashboards > Shop > Shop overview)
+# Prometheus: http://localhost:9090   (try the PromQL queries above)
+
+# Cause an incident and watch the dashboard react within ~30 s
+curl -X POST localhost:8082/chaos -H 'content-type: application/json' \
+     -d '{"error_rate":0.15,"extra_latency_ms":250}'
+```
+
+Then practise the investigation flow you would use on call:
+1. Overview: success rate drops, p95 latency rises.
+2. RED row: errors are in payments first; gateway and orders just pass them on.
+3. Click an exemplar dot on the latency graph -> a slow trace opens. The long
+   bar is `card_processor.charge`.
+4. In the trace, click "Logs for this span" -> `card declined by processor`.
+5. In Explore > Loki, run
+   `{service_name="payments"} | severity_text="ERROR"` and click "View trace"
+   on a line to go back.
+
+**Exercises:**
+- Add a panel "Requests by endpoint" using `sum by (http_target) (rate(http_server_duration_milliseconds_count[1m]))`.
+- In Explore > Tempo, write a TraceQL query for checkouts by one user:
+  `{ span.app.user_id = "user-7" }`.
+- In Explore > Loki, count errors per service:
+  `sum by (service_name) (count_over_time({service_namespace="shop"} | severity_number >= 17 [1m]))`.
+
+### What is missing (and why step 4 exists)
+
+Nobody stares at dashboards all day. Step 4 defines what "good enough" means
+(SLOs), and adds alerts that fire when the shop is burning through its error
+budget too fast, plus scripted chaos scenarios to test them.
