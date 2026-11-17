@@ -25,7 +25,7 @@ def clean(value: object) -> str:
     payload cannot forge extra log lines (log injection), and the length is
     capped.
     """
-    text = str(value)[:MAX_FIELD_CHARS]
+    text = str(value)[:MAX_FIELD_CHARS].replace("\r", " ").replace("\n", " ")
     return "".join(ch if ch.isprintable() else " " for ch in text)
 
 
