@@ -1,0 +1,20 @@
+# Prometheus PULLS ("scrapes") metrics from HTTP endpoints on a schedule.
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+scrape_configs:
+  # The Collector turns the OTLP metrics it receives from our services
+  # into a Prometheus endpoint on :8889. Prometheus scrapes it here.
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8889"]
+
+  # Prometheus scraping itself: a good habit, so you can see if it is healthy.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+# Tempo PUSHES its generated metrics (service graph, span metrics) into
+# Prometheus via remote write. That needs --web.enable-remote-write-receiver
+# (set in docker-compose.yml).

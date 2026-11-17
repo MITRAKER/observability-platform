@@ -1,0 +1,84 @@
+# OpenTelemetry Collector pipeline.
+#
+# Every service sends ALL its telemetry (traces, metrics, logs) to this one
+# place over OTLP. The Collector cleans it up and forwards it. Apps never need
+# to know which backend (Prometheus, Tempo, Loki, Datadog...) is behind it.
+#
+#   receivers  -> how data comes IN
+#   processors -> what happens to it on the way
+#   exporters  -> where it goes OUT
+#   service.pipelines -> wires them together, one pipeline per signal
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Protects the Collector from running out of memory under a traffic spike.
+  # Always put it first.
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+
+  # Groups data into batches before sending. Far fewer network calls.
+  batch:
+    send_batch_size: 1024
+    timeout: 5s
+
+  # Stamps every piece of data with the environment it came from.
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: demo
+        action: upsert
+
+exporters:
+  # METRICS -> exposed on :8889 in Prometheus format; Prometheus scrapes it.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    # Copy resource attributes (service.name, deployment.environment...)
+    # onto every metric as labels, so we can filter by service in queries.
+    resource_to_telemetry_conversion:
+      enabled: true
+    # OpenMetrics format carries exemplars: a trace id attached to a metric
+    # sample, so Grafana can jump from a latency spike to an example trace.
+    enable_open_metrics: true
+
+  # TRACES -> pushed to Tempo over OTLP gRPC.
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+  # LOGS -> pushed to Loki's native OTLP endpoint.
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+
+  # Still handy for debugging: add it to a pipeline below to print data.
+  debug:
+    verbosity: basic
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp/tempo]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [prometheus]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlphttp/loki]
