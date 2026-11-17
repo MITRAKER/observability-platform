@@ -1,0 +1,129 @@
+# Service Level Objectives (SLOs) for checkout, as Prometheus recording rules.
+#
+# SLO 1, availability: 99% of checkout requests do not fail with a 5xx.
+# SLO 2, latency:      95% of checkout requests finish within 250 ms.
+#
+# A recording rule pre-computes a query every evaluation interval and
+# stores the result as a new time series. Alerts and dashboards then read
+# these cheap series instead of re-running heavy queries over 30 days of data.
+#
+# Naming convention: level:metric:operation  (e.g. slo:checkout_errors:ratio_rate1h)
+
+groups:
+  - name: slo-checkout-availability
+    interval: 30s
+    rules:
+      - record: slo:checkout_errors:ratio_rate5m
+        expr: |
+          (sum(rate(http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout",http_status_code=~"5.."}[5m])) or vector(0))
+          /
+          sum(rate(http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout"}[5m]))
+      - record: slo:checkout_errors:ratio_rate30m
+        expr: |
+          (sum(rate(http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout",http_status_code=~"5.."}[30m])) or vector(0))
+          /
+          sum(rate(http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout"}[30m]))
+      - record: slo:checkout_errors:ratio_rate1h
+        expr: |
+          (sum(rate(http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout",http_status_code=~"5.."}[1h])) or vector(0))
+          /
+          sum(rate(http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout"}[1h]))
+      - record: slo:checkout_errors:ratio_rate2h
+        expr: |
+          (sum(rate(http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout",http_status_code=~"5.."}[2h])) or vector(0))
+          /
+          sum(rate(http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout"}[2h]))
+      - record: slo:checkout_errors:ratio_rate6h
+        expr: |
+          (sum(rate(http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout",http_status_code=~"5.."}[6h])) or vector(0))
+          /
+          sum(rate(http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout"}[6h]))
+      - record: slo:checkout_errors:ratio_rate1d
+        expr: |
+          (sum(rate(http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout",http_status_code=~"5.."}[1d])) or vector(0))
+          /
+          sum(rate(http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout"}[1d]))
+      - record: slo:checkout_errors:ratio_rate3d
+        expr: |
+          (sum(rate(http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout",http_status_code=~"5.."}[3d])) or vector(0))
+          /
+          sum(rate(http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout"}[3d]))
+      - record: slo:checkout_errors:ratio_rate30d
+        expr: |
+          (sum(rate(http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout",http_status_code=~"5.."}[30d])) or vector(0))
+          /
+          sum(rate(http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout"}[30d]))
+
+  - name: slo-checkout-latency
+    interval: 30s
+    rules:
+      - record: slo:checkout_slow:ratio_rate5m
+        expr: |
+          1 - (
+            sum(rate(http_server_duration_milliseconds_bucket{service_name="gateway",http_target="/checkout",le="250.0"}[5m]))
+            /
+            sum(rate(http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout"}[5m]))
+          )
+      - record: slo:checkout_slow:ratio_rate30m
+        expr: |
+          1 - (
+            sum(rate(http_server_duration_milliseconds_bucket{service_name="gateway",http_target="/checkout",le="250.0"}[30m]))
+            /
+            sum(rate(http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout"}[30m]))
+          )
+      - record: slo:checkout_slow:ratio_rate1h
+        expr: |
+          1 - (
+            sum(rate(http_server_duration_milliseconds_bucket{service_name="gateway",http_target="/checkout",le="250.0"}[1h]))
+            /
+            sum(rate(http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout"}[1h]))
+          )
+      - record: slo:checkout_slow:ratio_rate2h
+        expr: |
+          1 - (
+            sum(rate(http_server_duration_milliseconds_bucket{service_name="gateway",http_target="/checkout",le="250.0"}[2h]))
+            /
+            sum(rate(http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout"}[2h]))
+          )
+      - record: slo:checkout_slow:ratio_rate6h
+        expr: |
+          1 - (
+            sum(rate(http_server_duration_milliseconds_bucket{service_name="gateway",http_target="/checkout",le="250.0"}[6h]))
+            /
+            sum(rate(http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout"}[6h]))
+          )
+      - record: slo:checkout_slow:ratio_rate1d
+        expr: |
+          1 - (
+            sum(rate(http_server_duration_milliseconds_bucket{service_name="gateway",http_target="/checkout",le="250.0"}[1d]))
+            /
+            sum(rate(http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout"}[1d]))
+          )
+      - record: slo:checkout_slow:ratio_rate3d
+        expr: |
+          1 - (
+            sum(rate(http_server_duration_milliseconds_bucket{service_name="gateway",http_target="/checkout",le="250.0"}[3d]))
+            /
+            sum(rate(http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout"}[3d]))
+          )
+      - record: slo:checkout_slow:ratio_rate30d
+        expr: |
+          1 - (
+            sum(rate(http_server_duration_milliseconds_bucket{service_name="gateway",http_target="/checkout",le="250.0"}[30d]))
+            /
+            sum(rate(http_server_duration_milliseconds_count{service_name="gateway",http_target="/checkout"}[30d]))
+          )
+
+  - name: slo-targets
+    rules:
+      # The objectives themselves, stored as constant series so dashboards
+      # and alerts can reference them instead of hard-coding numbers.
+      - record: slo:checkout_availability:objective
+        expr: vector(0.99)
+      - record: slo:checkout_latency:objective
+        expr: vector(0.95)
+      # Error budget left over 30 days: 1 = untouched, 0 = spent, < 0 = SLO broken.
+      - record: slo:checkout_availability:error_budget_remaining
+        expr: 1 - (slo:checkout_errors:ratio_rate30d / (1 - 0.99))
+      - record: slo:checkout_latency:error_budget_remaining
+        expr: 1 - (slo:checkout_slow:ratio_rate30d / (1 - 0.95))

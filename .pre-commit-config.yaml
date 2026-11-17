@@ -1,0 +1,37 @@
+# Runs the fast checks on your machine before every commit, so CI rarely
+# fails for something trivial. Install once:  pip install pre-commit && pre-commit install
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-json
+      - id: check-added-large-files
+        args: [--maxkb=2048]
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.5
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy --strict
+        entry: mypy services/gateway/main.py services/orders/main.py services/payments/main.py loadgen/loadgen.py alert-sink/sink.py tools/check_power_of_ten.py tests
+        language: system
+        types: [python]
+        pass_filenames: false
+      - id: power-of-ten
+        name: NASA/JPL Power of Ten
+        entry: python tools/check_power_of_ten.py
+        language: system
+        types: [python]
+        pass_filenames: false

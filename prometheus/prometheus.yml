@@ -18,3 +18,13 @@ scrape_configs:
 # Tempo PUSHES its generated metrics (service graph, span metrics) into
 # Prometheus via remote write. That needs --web.enable-remote-write-receiver
 # (set in docker-compose.yml).
+
+# Rules: SLO recording rules and alerts (see prometheus/rules/).
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+# Where to send firing alerts.
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]

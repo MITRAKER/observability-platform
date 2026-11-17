@@ -1,0 +1,24 @@
+# Alertmanager receives firing alerts from Prometheus and decides who gets
+# told, how, and how often. Prometheus decides WHEN something is wrong;
+# Alertmanager decides WHAT TO DO about it.
+route:
+  receiver: alert-sink
+  # Alerts with the same alertname + slo are bundled into one notification.
+  group_by: [alertname, slo, service_name]
+  group_wait: 30s        # wait a bit so related alerts arrive together
+  group_interval: 5m     # how often to send updates for a group
+  repeat_interval: 4h    # re-notify if still firing (avoid spamming)
+
+receivers:
+  - name: alert-sink
+    webhook_configs:
+      # Our tiny demo receiver prints notifications to its log.
+      # In real life this would be Slack, PagerDuty, Opsgenie, email...
+      - url: http://alert-sink:9000/
+        send_resolved: true
+
+inhibit_rules:
+  # If the whole telemetry pipeline is down, every other alert is noise.
+  - source_matchers: [alertname="TelemetryPipelineDown"]
+    target_matchers: [severity="page"]
+    equal: []

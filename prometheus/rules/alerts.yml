@@ -1,0 +1,86 @@
+# Alert rules.
+#
+# SLO alerts use the "multi-window, multi-burn-rate" method from the Google
+# SRE Workbook (chapter 5). Burn rate = how fast we spend the error budget:
+#   burn rate 1   -> budget lasts exactly 30 days
+#   burn rate 14.4 -> 2% of the monthly budget gone in 1 hour  -> page now
+#   burn rate 6    -> 5% of the budget gone in 6 hours          -> page
+#   burn rate 1    -> 10% gone in 3 days                         -> ticket
+# Each alert checks a LONG window (is it significant?) AND a SHORT window
+# (is it still happening?), so alerts fire fast and also stop fast.
+#
+# With a 99% SLO the error budget is 1%, so burn rate 14.4 = 14.4% errors.
+
+groups:
+  - name: slo-burn-rate
+    rules:
+      - alert: CheckoutErrorBudgetFastBurn
+        expr: |
+          slo:checkout_errors:ratio_rate1h > (14.4 * 0.01)
+          and
+          slo:checkout_errors:ratio_rate5m > (14.4 * 0.01)
+        for: 2m
+        labels:
+          severity: page
+          slo: checkout-availability
+        annotations:
+          summary: "Checkout is burning its error budget 14x too fast"
+          description: "{{ $value | humanizePercentage }} of checkouts are failing (5m window). At this rate the 30-day budget is gone in about 2 days."
+          runbook: "docs/runbooks.md#checkouterrorbudgetfastburn"
+
+      - alert: CheckoutErrorBudgetSlowBurn
+        expr: |
+          slo:checkout_errors:ratio_rate6h > (6 * 0.01)
+          and
+          slo:checkout_errors:ratio_rate30m > (6 * 0.01)
+        for: 5m
+        labels:
+          severity: page
+          slo: checkout-availability
+        annotations:
+          summary: "Checkout is burning its error budget 6x too fast"
+          description: "{{ $value | humanizePercentage }} of checkouts failing over 30m."
+          runbook: "docs/runbooks.md#checkouterrorbudgetslowburn"
+
+      - alert: CheckoutLatencyBudgetFastBurn
+        # 95% latency SLO -> 5% budget; burn rate 14.4 would exceed 100%,
+        # so for this SLO we page at burn rate 6 (30% of requests slow).
+        expr: |
+          slo:checkout_slow:ratio_rate1h > (6 * 0.05)
+          and
+          slo:checkout_slow:ratio_rate5m > (6 * 0.05)
+        for: 2m
+        labels:
+          severity: page
+          slo: checkout-latency
+        annotations:
+          summary: "Too many slow checkouts (> 250 ms)"
+          description: "{{ $value | humanizePercentage }} of checkouts are slower than 250 ms."
+          runbook: "docs/runbooks.md#checkoutlatencybudgetfastburn"
+
+  - name: symptoms
+    rules:
+      - alert: ServiceNoTraffic
+        # A service that was receiving requests an hour ago and now gets none
+        # is probably down (or the telemetry pipeline is broken).
+        expr: |
+          sum by (service_name) (rate(http_server_duration_milliseconds_count[2m])) == 0
+          and
+          sum by (service_name) (rate(http_server_duration_milliseconds_count[1h] offset 10m)) > 0
+        for: 3m
+        labels:
+          severity: page
+        annotations:
+          summary: "{{ $labels.service_name }} receives no requests"
+          description: "{{ $labels.service_name }} has handled no requests for 5 minutes."
+          runbook: "docs/runbooks.md#servicenotraffic"
+
+      - alert: TelemetryPipelineDown
+        expr: up{job="otel-collector"} == 0
+        for: 1m
+        labels:
+          severity: page
+        annotations:
+          summary: "Prometheus cannot scrape the OpenTelemetry Collector"
+          description: "No metrics are arriving. Dashboards and SLO alerts are blind."
+          runbook: "docs/runbooks.md#telemetrypipelinedown"

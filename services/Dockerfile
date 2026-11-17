@@ -13,8 +13,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY ${SERVICE}/ .
 
 # Run as a non-root user: a small security habit worth showing on a resume.
-RUN useradd --create-home appuser
-USER appuser
+RUN useradd --uid 10001 --create-home appuser
+USER 10001
 
 EXPOSE 8000
 # `opentelemetry-instrument` wraps the normal start command. Before the app

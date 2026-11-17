@@ -1,0 +1,24 @@
+# Dependabot opens a PR when a dependency has a new version or a security fix.
+# Each PR runs the full CI, so an upgrade is only merged when everything passes.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directories: ["/", "/services"]
+    schedule: { interval: weekly }
+    groups:
+      opentelemetry:
+        patterns: ["opentelemetry-*"]
+      dev-tools:
+        patterns: ["ruff", "mypy", "pytest*", "pip-audit", "pre-commit", "httpx2"]
+
+  - package-ecosystem: docker
+    directories: ["/services", "/loadgen", "/alert-sink"]
+    schedule: { interval: weekly }
+
+  - package-ecosystem: docker-compose
+    directory: "/"
+    schedule: { interval: weekly }
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule: { interval: weekly }
