@@ -1,0 +1,93 @@
+# Continuous Delivery: pushing a tag like v0.6.0 builds every image, publishes
+# it to GitHub Container Registry, and creates a GitHub release whose notes
+# come from CHANGELOG.md.
+#
+#   git tag -a v0.6.0 -m "v0.6.0" && git push origin v0.6.0
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests must pass before releasing
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check . && mypy services/gateway/main.py services/orders/main.py services/payments/main.py loadgen/loadgen.py alert-sink/sink.py tools/check_power_of_ten.py tests
+      - run: pytest --cov
+
+  images:
+    name: Publish ${{ matrix.name }} image
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - { name: gateway, context: services, service: gateway }
+          - { name: orders, context: services, service: orders }
+          - { name: payments, context: services, service: payments }
+          - { name: loadgen, context: loadgen, service: "" }
+          - { name: alert-sink, context: alert-sink, service: "" }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lower-case image owner (registry names must be lower case)
+        run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+      # Third-party actions are pinned to commit SHAs (see LEARNING.md, step 5).
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: ${{ matrix.context }}
+          build-args: SERVICE=${{ matrix.service }}
+          push: true
+          tags: |
+            ghcr.io/${{ env.OWNER }}/observability-platform-${{ matrix.name }}:${{ github.ref_name }}
+            ghcr.io/${{ env.OWNER }}/observability-platform-${{ matrix.name }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+          provenance: true
+          sbom: true
+
+  github-release:
+    name: Create GitHub release
+    needs: images
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract this version's notes from CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { found = 1; next }
+            found && /^## \[/      { exit }
+            found                  { print }
+          ' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "No CHANGELOG entry for $version" >&2; exit 1; }
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag

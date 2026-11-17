@@ -12,7 +12,7 @@ x-otel-env: &otel-env
   OTEL_METRIC_EXPORT_INTERVAL: "5000"            # send metrics every 5 s
   OTEL_PYTHON_LOG_CORRELATION: "true"            # put trace_id in log records
   OTEL_PYTHON_LOG_LEVEL: info
-  OTEL_RESOURCE_ATTRIBUTES: service.namespace=shop,service.version=0.5.0
+  OTEL_RESOURCE_ATTRIBUTES: service.namespace=shop,service.version=0.6.0
 
 services:
   gateway:
