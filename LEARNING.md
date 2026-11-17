@@ -9,6 +9,7 @@ built, why it was built that way, and the ideas you need to build it yourself.
 2. [Step 2: OpenTelemetry and the Collector](#step-2-opentelemetry-and-the-collector)
 3. [Step 3: Prometheus, Tempo, Loki and Grafana](#step-3-prometheus-tempo-loki-and-grafana)
 4. [Step 4: SLOs, alerts and chaos scenarios](#step-4-slos-alerts-and-chaos-scenarios)
+5. [Step 5: Professional code quality and CI](#step-5-professional-code-quality-and-ci)
 
 ---
 
@@ -528,3 +529,122 @@ docker run --rm --entrypoint promtool -v $PWD/prometheus:/p \
   error percent? (Answer: 1.44%.) Update the test that expects 20% to fire.
 - Add a "ticket" severity alert (burn rate 1 over 3d and 6h) and route
   `severity="ticket"` to a different receiver in Alertmanager.
+
+---
+
+## Step 5: Professional code quality and CI
+
+### What we built
+
+| File | What it does |
+|---|---|
+| `pyproject.toml` | Settings for ruff (lint + format), mypy (types), pytest and coverage. |
+| `requirements-dev.txt` | Pinned versions of every developer tool. |
+| `tests/` | 54 unit tests, 99% branch coverage. CI fails below 90%. |
+| `tools/check_power_of_ten.py` | Checks the JPL rules no off-the-shelf linter covers. |
+| `scripts/smoke_test.sh` | Starts nothing, checks everything: traffic flows and every signal reaches its backend. |
+| `.github/workflows/ci.yml` | Lint, tests, security scans, config validation, full-stack smoke test. |
+| `.github/workflows/codeql.yml` | GitHub's security analysis, on every PR and weekly. |
+
+### The NASA/JPL "Power of Ten"
+
+In 2006 Gerard Holzmann at NASA's Jet Propulsion Laboratory wrote ten rules
+for code that must not fail (it flies to Mars). They were written for C, but
+the *reasons* behind them apply to any language: code that is simple enough
+to check by a tool is code you can trust. Here is each rule, what it means
+in Python, and how this repo enforces it.
+
+| # | Original rule (C) | Our Python version | Enforced by |
+|---|---|---|---|
+| 1 | Simple control flow: no `goto`, `setjmp`, recursion. | No recursion. Cyclomatic complexity at most 8, nesting at most 3. | `check_power_of_ten.py` (recursion), ruff `C90`, `PLR1702` |
+| 2 | Every loop has a fixed upper bound. | No `while True`. The load generator runs at most `RPS x DURATION_S` requests; the alert sink reads at most 100 alerts per message; the smoke test retries at most 60 times. | Code review, tests (`test_run_sends_exact_number_of_requests`, `test_parse_payload_is_bounded`) |
+| 3 | No dynamic memory allocation after start-up. | Python allocates constantly, so we keep the *spirit*: memory has a ceiling. `BoundedStore` caps stored orders at 10,000; the load generator caps open requests at `MAX_IN_FLIGHT` and folds results into a small `Counter` instead of a growing list; request bodies are size-limited. | Tests (`test_bounded_store_evicts_oldest`) |
+| 4 | Functions no longer than 60 lines (one printed page). | Same: 60 lines, plus at most 30 statements, 8 branches, 5 arguments. | `check_power_of_ten.py`, ruff `PLR0915`, `PLR0912`, `PLR0913` |
+| 5 | At least two assertions per function. | `assert` is removed when Python runs with `-O`, so production code checks invariants with explicit `if ...: raise` (e.g. `price_order` refuses a non-positive amount; `load_config` refuses out-of-range settings). Assertions live in tests, and every test module must contain them. | `check_power_of_ten.py`, tests for each invariant |
+| 6 | Declare data at the smallest possible scope. | Settings are frozen dataclasses or Pydantic models, passed as arguments. The one mutable global (`chaos` in payments) is marked and justified. | ruff `PLW0603` (needs an explicit `noqa` with a reason) |
+| 7 | Check every return value and validate every parameter. | Every HTTP response is checked (`resp.is_error`), network errors are caught, non-JSON error bodies are handled, every input is validated by Pydantic with bounds, env vars are parsed and range-checked at start-up. | mypy `--strict`, ruff `B`, `RET`, `TRY`, `BLE` |
+| 8 | Limit the preprocessor. | Python has no preprocessor; the equivalent risk is metaprogramming. No `eval`/`exec`, no dynamic imports in production code. | ruff `S102`, `S307` |
+| 9 | Restrict pointers: one level of dereferencing, no function pointers. | No `getattr` with computed names, no monkey-patching in production code (only tests patch). Types are explicit so a reader can follow every call. | mypy `--strict`, code review |
+| 10 | Compile with all warnings on; zero warnings; run static analysers daily. | ruff with 20 rule sets, mypy `--strict`, pytest with `filterwarnings = error`, CodeQL weekly and on every PR. One warning fails the build. | CI |
+
+When a rule is broken on purpose, the code says so: for example
+`# noqa: PLW0603 (deliberate: one process-wide setting)`. A suppression
+without a reason is treated as a bug in review.
+
+### The quality tools, one by one
+
+1. **ruff** is a very fast linter *and* formatter. The linter catches bugs
+   (unused variables, mutable default arguments), security issues (the `S`
+   rules are the Bandit security checker), and complexity. The formatter
+   makes everyone's code look identical, so reviews are about logic, not
+   spaces.
+
+2. **mypy `--strict`** reads the type hints and proves that, for example,
+   `error_detail()` always returns a `str`. It found a real case where a
+   JSON body could make it return something else. Types are documentation
+   that cannot go out of date.
+
+3. **pytest** runs the tests. The services are tested without a network:
+   `httpx.MockTransport` answers the outgoing HTTP calls, so we can simulate
+   "payments is down" or "payments returns 500" in milliseconds.
+
+4. **Coverage** measures which lines and *branches* the tests run. 99% here.
+   The CI fails under 90%. Coverage does not prove the tests are good, but
+   uncovered code is definitely untested.
+
+5. **pip-audit** checks every pinned dependency against the database of known
+   vulnerabilities (CVEs). **gitleaks** scans the git history for committed
+   passwords and API keys. **CodeQL** does deeper security analysis of the
+   code's data flow.
+
+6. **Config validation.** Not only Python can be wrong. CI validates the
+   Prometheus config and rules, runs the alert unit tests, checks the
+   Alertmanager and Collector configs, lints the Dockerfiles (hadolint) and
+   the shell scripts (shellcheck), and checks the dashboards are valid JSON.
+
+7. **End-to-end smoke test.** Unit tests prove the parts work; the e2e job
+   proves they work *together*: it builds every image, starts the whole
+   stack, sends traffic, and checks that metrics, traces, logs, SLO rules and
+   dashboards all appear.
+
+### How CI is organised (and why)
+
+```
+pull request ─┬─ lint ─────┐
+              ├─ test ─────┼─ e2e (only if the fast jobs pass)
+              ├─ config ───┘
+              ├─ security
+              └─ CodeQL
+```
+
+- **Fast jobs run in parallel** and fail in about a minute, so you get
+  feedback quickly. The slow e2e job only starts when they pass.
+- **Least privilege:** `permissions: contents: read`. A compromised step
+  cannot push code or change settings.
+- **Concurrency:** a new push cancels the old run of the same PR.
+- **Timeouts** on every job (rule 2 again: everything is bounded).
+- **Pinned versions** for tools and images, so a build that passed yesterday
+  passes today. Dependabot (step 6) keeps them up to date on purpose.
+
+### Try it yourself
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
+
+ruff check .                     # lint
+ruff format --check .            # formatting
+mypy services/gateway/main.py services/orders/main.py services/payments/main.py \
+     loadgen/loadgen.py alert-sink/sink.py tools/check_power_of_ten.py tests
+python tools/check_power_of_ten.py
+pytest --cov                     # tests + coverage report
+
+docker compose up -d --build && ./scripts/smoke_test.sh
+```
+
+**Exercises:**
+- Write a recursive function in `services/orders/main.py` and run
+  `python tools/check_power_of_ten.py`. Then undo it.
+- Change `BoundedStore.put` so it forgets to evict. Which test fails?
+- Delete the `try/except` in `gateway.checkout` and run the tests. Which
+  rule from the table did you break?

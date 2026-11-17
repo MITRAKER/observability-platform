@@ -32,10 +32,20 @@ docker compose logs -f alert-sink # the "pager"
 
 ![SLO dashboard during an incident](docs/slo-dashboard.png)
 
+## Development
+
+```bash
+pip install -r requirements-dev.txt
+ruff check . && ruff format --check . && pytest --cov
+```
+
+See [LEARNING.md, step 5](LEARNING.md#step-5-professional-code-quality-and-ci) for the full list of checks.
+
 ## Roadmap
 
 - [x] Step 1: Three services, load generator, Docker Compose
 - [x] Step 2: OpenTelemetry instrumentation and Collector
 - [x] Step 3: Prometheus, Tempo, Loki and Grafana dashboards
 - [x] Step 4: SLOs, burn-rate alerts with unit tests, Alertmanager, chaos scenarios, runbooks
-- [ ] Step 5: Architecture diagram, CI
+- [x] Step 5: CI (lint, strict types, tests with 99% coverage, security scans, config validation, end-to-end smoke test) and NASA/JPL Power of Ten rules
+- [ ] Step 6: Repo extras, release automation, architecture diagram
