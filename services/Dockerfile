@@ -1,6 +1,6 @@
 # One Dockerfile is shared by all three services.
 # The build arg SERVICE picks which folder gets copied in.
-FROM python:3.13-slim
+FROM python:3.15-slim
 
 ARG SERVICE
 WORKDIR /app
