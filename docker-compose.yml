@@ -110,7 +110,7 @@ services:
       - "3100:3100"
 
   grafana:
-    image: grafana/grafana:12.4.15
+    image: grafana/grafana:13.3.1
     environment:
       # Demo only: log in automatically as admin. Never do this in production.
       GF_AUTH_ANONYMOUS_ENABLED: "true"
