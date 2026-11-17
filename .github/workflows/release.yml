@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -45,7 +45,7 @@ jobs:
           - { name: loadgen, context: loadgen, service: "" }
           - { name: alert-sink, context: alert-sink, service: "" }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Lower-case image owner (registry names must be lower case)
         run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
       # Third-party actions are pinned to commit SHAs (see LEARNING.md, step 5).
@@ -77,7 +77,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Extract this version's notes from CHANGELOG.md
         run: |
           version="${GITHUB_REF_NAME#v}"
