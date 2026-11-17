@@ -1,0 +1,93 @@
+# Tooling configuration for the whole repository.
+# The services are deployed separately (one Docker image each); this file only
+# configures the developer tools: ruff, mypy, pytest and coverage.
+
+[project]
+name = "observability-platform"
+version = "0.6.0"
+description = "A microservice shop instrumented with OpenTelemetry, Prometheus, Tempo, Loki and Grafana"
+requires-python = ">=3.13"
+license = "MIT"
+
+# ---------------------------------------------------------------- ruff
+[tool.ruff]
+line-length = 110
+target-version = "py313"
+extend-exclude = ["tools/gen_*_dashboard.py"]
+
+[tool.ruff.lint]
+select = [
+  "E", "W",   # pycodestyle: style errors and warnings
+  "F",        # pyflakes: unused imports/variables, undefined names
+  "I",        # isort: import order
+  "N",        # pep8-naming
+  "UP",       # pyupgrade: modern syntax
+  "B",        # bugbear: likely bugs
+  "S",        # bandit: security issues
+  "C90",      # mccabe: cyclomatic complexity (JPL rule 1)
+  "PL",       # pylint: function size, branches, arguments (JPL rule 4)
+  "SIM",      # simplifications
+  "RET",      # return statements
+  "ARG",      # unused arguments
+  "ANN",      # type annotations everywhere
+  "ASYNC",    # async pitfalls
+  "BLE",      # no blind `except Exception`
+  "TRY",      # exception handling hygiene
+  "D",        # docstrings
+  "PT",       # pytest style
+  "RUF",      # ruff-specific
+]
+ignore = [
+  "D203", "D213",  # pick one docstring layout (D211 + D212)
+  "D105", "D107",  # magic methods / __init__ need no docstring
+  "TRY003",        # short messages in exceptions are fine here
+  "TRY400",        # network errors are expected: log one line, not a full traceback
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S311", "D", "ANN", "PLR2004", "ARG"]  # asserts, seeded RNGs and magic numbers are what tests are made of
+"loadgen/loadgen.py" = ["T201"]                       # it is a CLI: print is its output
+
+[tool.ruff.lint.mccabe]
+max-complexity = 8          # JPL rule 1: simple control flow
+
+[tool.ruff.lint.pylint]
+max-args = 5
+max-branches = 8
+max-returns = 4
+max-statements = 30         # JPL rule 4: small functions (see also tools/check_function_length.py)
+max-nested-blocks = 3
+
+[tool.ruff.format]
+quote-style = "double"
+
+# ---------------------------------------------------------------- mypy
+[tool.mypy]
+python_version = "3.13"
+strict = true               # JPL rule 10: every warning on
+warn_unreachable = true
+explicit_package_bases = true
+mypy_path = "."
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+
+# ---------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+filterwarnings = ["error"]  # JPL rule 10: a warning fails the test run
+
+# ---------------------------------------------------------------- coverage
+[tool.coverage.run]
+branch = true
+source = ["services", "loadgen", "alert-sink"]
+omit = ["tools/*"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+skip_covered = false
+exclude_also = ['if __name__ == "__main__":']

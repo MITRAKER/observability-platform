@@ -12,7 +12,7 @@ x-otel-env: &otel-env
   OTEL_METRIC_EXPORT_INTERVAL: "5000"            # send metrics every 5 s
   OTEL_PYTHON_LOG_CORRELATION: "true"            # put trace_id in log records
   OTEL_PYTHON_LOG_LEVEL: info
-  OTEL_RESOURCE_ATTRIBUTES: service.namespace=shop,service.version=0.4.0
+  OTEL_RESOURCE_ATTRIBUTES: service.namespace=shop,service.version=0.6.0
 
 services:
   gateway:
@@ -88,6 +88,7 @@ services:
   # Stand-in for Slack/PagerDuty: prints notifications to its log.
   alert-sink:
     build: ./alert-sink
+    restart: unless-stopped
 
   tempo:
     image: grafana/tempo:2.10.4
@@ -127,6 +128,7 @@ services:
     environment:
       GATEWAY_URL: http://gateway:8000
       RPS: "5"
+    restart: unless-stopped   # loadgen exits after DURATION_S (bounded loop); start a new run
     depends_on: [gateway]
 
 volumes:
