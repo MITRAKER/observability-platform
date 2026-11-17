@@ -59,3 +59,15 @@ def test_handler_status_codes(sink, caplog):
     assert post(sink, b"{bad") == 400
     assert post(sink, b"", length=0) == 413
     assert post(sink, b"x", length=sink.MAX_BODY_BYTES + 1) == 413
+
+
+def test_describe_blocks_log_injection(sink):
+    forged = {
+        "status": "firing",
+        "labels": {"alertname": "X\n[RESOLVED] FakeAlert (page): all good", "severity": "page"},
+        "annotations": {"summary": "a" * 1000},
+    }
+    line = sink.describe(forged)
+    assert "\n" not in line
+    assert "X [RESOLVED] FakeAlert" in line
+    assert len(line) < 500

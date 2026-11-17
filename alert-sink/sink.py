@@ -11,20 +11,32 @@ from typing import Any
 
 MAX_BODY_BYTES = 1_000_000  # refuse absurdly large payloads (bounded input)
 MAX_ALERTS_PER_MESSAGE = 100  # bounded loop over the payload
+MAX_FIELD_CHARS = 200  # longest value we copy from a payload into a log line
 HOST = "0.0.0.0"  # noqa: S104 (runs in a container; must accept connections from Alertmanager)
 PORT = 9000
 
 log = logging.getLogger("alert-sink")
 
 
+def clean(value: object) -> str:
+    """Make an untrusted value safe for a single log line.
+
+    Line breaks and other control characters are replaced, so a crafted
+    payload cannot forge extra log lines (log injection), and the length is
+    capped.
+    """
+    text = str(value)[:MAX_FIELD_CHARS]
+    return "".join(ch if ch.isprintable() else " " for ch in text)
+
+
 def describe(alert: dict[str, Any]) -> str:
     """Return a one-line, human-readable summary of one alert."""
     labels = alert.get("labels", {})
     notes = alert.get("annotations", {})
-    status = str(alert.get("status", "unknown")).upper()
-    name = labels.get("alertname", "?")
-    severity = labels.get("severity", "none")
-    return f"[{status}] {name} ({severity}): {notes.get('summary', '')}"
+    status = clean(alert.get("status", "unknown")).upper()
+    name = clean(labels.get("alertname", "?"))
+    severity = clean(labels.get("severity", "none"))
+    return f"[{status}] {name} ({severity}): {clean(notes.get('summary', ''))}"
 
 
 def parse_payload(raw: bytes) -> list[dict[str, Any]] | None:

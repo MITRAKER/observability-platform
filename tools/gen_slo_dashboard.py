@@ -55,5 +55,7 @@ add({"type": "table", "title": "Firing and pending alerts", "description": "From
 dash = {"uid": "shop-slos", "title": "Shop SLOs", "tags": ["shop", "slo"], "timezone": "browser",
         "schemaVersion": 39, "version": 1, "refresh": "10s", "time": {"from": "now-30m", "to": "now"},
         "templating": {"list": []}, "annotations": {"list": []}, "panels": panels}
-json.dump(dash, open(sys.argv[1], "w"), indent=2)
+with open(sys.argv[1], "w", encoding="utf-8") as out:
+    json.dump(dash, out, indent=2)
+    out.write("\n")
 print(len(panels))
