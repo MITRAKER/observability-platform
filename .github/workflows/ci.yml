@@ -59,7 +59,7 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - name: pytest (fails below 90% coverage)
         run: pytest --cov --cov-report=term-missing --cov-report=xml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: coverage.xml
