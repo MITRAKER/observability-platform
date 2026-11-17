@@ -79,7 +79,9 @@ jobs:
       - name: pip-audit (known vulnerabilities in dependencies)
         run: pip-audit -r services/requirements.txt -r requirements-dev.txt
       - name: gitleaks (committed secrets)
-        uses: gitleaks/gitleaks-action@v2
+        # Third-party action pinned to a full commit SHA: a tag can be moved to
+        # malicious code, a SHA cannot. Dependabot updates the SHA.
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

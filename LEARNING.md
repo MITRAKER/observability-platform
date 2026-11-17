@@ -626,6 +626,11 @@ pull request ─┬─ lint ─────┐
 - **Timeouts** on every job (rule 2 again: everything is bounded).
 - **Pinned versions** for tools and images, so a build that passed yesterday
   passes today. Dependabot (step 6) keeps them up to date on purpose.
+- **Third-party actions pinned to a commit SHA**, not a tag
+  (`gitleaks/gitleaks-action@ff98106... # v2.3.9`). Whoever controls a repo
+  can move a tag like `v2` to new, possibly malicious code; a commit SHA can
+  never change. CodeQL flagged this on the first run, which is exactly the
+  kind of supply-chain issue it is there to catch.
 
 ### Try it yourself
 
