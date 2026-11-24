@@ -1,6 +1,6 @@
 # Developer and CI tools. Runtime dependencies live in services/requirements.txt.
 -r services/requirements.txt
-ruff==0.17.5
+ruff==0.17.6
 mypy==2.4.1
 pytest==9.2.0
 pytest-cov==7.1.0
